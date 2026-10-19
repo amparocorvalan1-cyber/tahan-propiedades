@@ -29,6 +29,33 @@ class TahanApp extends StatelessWidget {
       ),
       // Pantalla 22 = bienvenida (logo). Al tocar pasa al Inicio (pantalla 1).
       home: const ScreenPage(22),
+      // En pantallas anchas (compu) se muestra dentro de un marco de celular.
+      builder: (context, child) {
+        final size = MediaQuery.of(context).size;
+        if (size.width < 600) return child!;
+        final h = size.height * 0.94;
+        final w = h * 880 / 1913;
+        return Container(
+          color: const Color(0xFF2B2B2B),
+          alignment: Alignment.center,
+          child: Container(
+            width: w + 20,
+            height: h + 20,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(44),
+              boxShadow: const [
+                BoxShadow(color: Colors.black54, blurRadius: 30, spreadRadius: 2),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(34),
+              child: child,
+            ),
+          ),
+        );
+      },
     );
   }
 }
