@@ -1,0 +1,55 @@
+name: Crear APK para Android
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Crear la carpeta de Android
+        run: flutter create . --platforms=android --project-name tahan_propiedades --org com.duoapps
+
+      - name: Permitir internet y abrir enlaces (WhatsApp, mail, Instagram)
+        run: |
+          python3 - <<'PYEOF'
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          intents = '''
+              <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="https"/></intent>
+              <intent><action android:name="android.intent.action.VIEW"/><data android:scheme="mailto"/></intent>'''
+          if '<queries>' in s:
+              s = s.replace('<queries>', '<queries>' + intents, 1)
+          else:
+              s = s.replace('</manifest>', '    <queries>' + intents + '\n    </queries>\n</manifest>', 1)
+          if 'android.permission.INTERNET' not in s:
+              s = s.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
+          open(p, 'w').write(s)
+          PYEOF
+
+      - run: flutter pub get
+      - run: flutter build apk --release
+
+      - name: Renombrar el APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk tahan-propiedades.apk
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: Tahan Propiedades (Android) #${{ github.run_number }}
+          files: tahan-propiedades.apk
