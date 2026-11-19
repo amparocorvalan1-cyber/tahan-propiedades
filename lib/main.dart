@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'config.dart';
 
 // Tahan Propiedades - DUO Apps Development
 // NOTA: la app NO usa geolocalización (sin GPS, mapas ni permisos de ubicación).
-// Base de datos: Supabase (catálogo de propiedades y consultas de clientes).
+// Base de datos: Firebase Cloud Firestore (NoSQL): catálogo y consultas de clientes.
 
 const String kWhatsApp = 'https://wa.link/lc56dd';
 const String kMail = 'mailto:veronicatahaninmobiliaria@gmail.com';
@@ -21,14 +22,14 @@ const Color kRosa = Color(0xFFFBE9E7);
 const Color kCampo = Color(0xFFAD9C92);
 
 // ---------------------------------------------------------------------------
-// Datos (Supabase)
+// Datos (Firebase)
 // ---------------------------------------------------------------------------
 
 /// Una propiedad del catálogo. La ficha es la pantalla número (posición + 2).
 class Ficha {
   final String operacion; // 'venta' o 'alquiler'
   final int orden;
-  final String imagen; // nombre del archivo en el bucket "fichas"
+  final String imagen; // nombre del archivo en assets/screens/
   const Ficha({
     required this.operacion,
     required this.orden,
@@ -36,10 +37,10 @@ class Ficha {
   });
 }
 
-bool supabaseListo = false;
+bool firebaseListo = false;
 List<Ficha> catalogo = [];
 
-/// Catálogo de respaldo: se usa si Supabase no está configurado o no responde.
+/// Catálogo de respaldo: se usa si Firebase no responde.
 List<Ficha> catalogoLocal() {
   final lista = <Ficha>[];
   for (var n = 2; n <= 19; n++) {
@@ -54,22 +55,25 @@ List<Ficha> catalogoLocal() {
 
 Future<void> iniciarDatos() async {
   catalogo = catalogoLocal();
-  if (!supabaseConfigurado) return;
   try {
-    await Supabase.initialize(url: kSupabaseUrl, anonKey: kSupabaseAnonKey);
-    supabaseListo = true;
+    await Firebase.initializeApp(options: kFirebaseOptions);
+    firebaseListo = true;
   } catch (_) {
-    supabaseListo = false;
+    firebaseListo = false;
     return;
   }
   try {
-    final filas = await Supabase.instance.client
-        .from('propiedades')
-        .select()
-        .order('orden')
-        .timeout(const Duration(seconds: 6));
+    final col = FirebaseFirestore.instance.collection('propiedades');
+    var snap = await col.get().timeout(const Duration(seconds: 6));
+    if (snap.docs.isEmpty) {
+      // Primera vez: carga el catálogo inicial (solo funciona si las reglas
+      // de Firestore permiten escribir en "propiedades").
+      await sembrarCatalogo();
+      snap = await col.get().timeout(const Duration(seconds: 6));
+    }
     final lista = <Ficha>[];
-    for (final f in filas) {
+    for (final doc in snap.docs) {
+      final f = doc.data();
       final imagen = (f['imagen'] ?? '').toString();
       if (imagen.isEmpty) continue;
       lista.add(Ficha(
@@ -87,6 +91,21 @@ Future<void> iniciarDatos() async {
     if (lista.isNotEmpty) catalogo = lista.take(18).toList();
   } catch (_) {
     // Si falla la lectura, queda el catálogo local.
+  }
+}
+
+/// Carga las 18 propiedades en la colección "propiedades" de Firestore.
+Future<void> sembrarCatalogo() async {
+  try {
+    final db = FirebaseFirestore.instance;
+    final batch = db.batch();
+    for (var i = 0; i < kPropiedadesIniciales.length; i++) {
+      final id = 'p${(i + 1).toString().padLeft(2, '0')}';
+      batch.set(db.collection('propiedades').doc(id), kPropiedadesIniciales[i]);
+    }
+    await batch.commit();
+  } catch (_) {
+    // Sin permiso de escritura: se usa el catálogo local.
   }
 }
 
@@ -253,30 +272,14 @@ Route<void> _fade(ScreenPage page) {
   );
 }
 
-/// Imagen de una pantalla. Las fichas se descargan de Supabase Storage;
-/// mientras cargan (o si falla) se usa la copia que viene dentro de la app.
+/// Imagen de una pantalla: viene dentro de la app (assets/screens).
 Widget screenImage(int n) {
-  final local = Image.asset(
+  return Image.asset(
     assetFor(n),
     fit: BoxFit.fill,
     gaplessPlayback: true,
     errorBuilder: (_, __, ___) => const SizedBox.expand(),
   );
-  if (supabaseListo && esFicha(n)) {
-    final ficha = catalogo[n - 2];
-    final url = Supabase.instance.client.storage
-        .from('fichas')
-        .getPublicUrl(ficha.imagen);
-    return Image.network(
-      url,
-      fit: BoxFit.fill,
-      gaplessPlayback: true,
-      loadingBuilder: (context, child, progress) =>
-          progress == null ? child : local,
-      errorBuilder: (_, __, ___) => local,
-    );
-  }
-  return local;
 }
 
 Widget hotspotWidget(BuildContext context, Hot h, double s, int n) {
@@ -361,7 +364,7 @@ class ScreenPage extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Contáctanos: formulario real que guarda la consulta en Supabase
+// Contáctanos: formulario real que guarda la consulta en Firestore
 // ---------------------------------------------------------------------------
 
 class ContactoPage extends StatefulWidget {
@@ -399,17 +402,18 @@ class _ContactoPageState extends State<ContactoPage> {
       _aviso('Completá tu nombre, un correo válido y el mensaje.');
       return;
     }
-    if (!supabaseListo) {
+    if (!firebaseListo) {
       _aviso('Por ahora no hay conexión con la base de datos.');
       return;
     }
     setState(() => _enviando = true);
     try {
-      await Supabase.instance.client.from('consultas').insert({
+      await FirebaseFirestore.instance.collection('consultas').add({
         'nombre': nombre,
         'email': email,
         'mensaje': mensaje,
-      });
+        'creado': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 10));
       _nombre.clear();
       _email.clear();
       _mensaje.clear();
