@@ -41,6 +41,17 @@ jobs:
           open(p, 'w').write(s)
           PYEOF
 
+      - name: Versión mínima de Android para Firebase
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          for p in ['android/app/build.gradle.kts', 'android/app/build.gradle']:
+              if os.path.exists(p):
+                  s = open(p).read()
+                  s = s.replace('flutter.minSdkVersion', '23')
+                  open(p, 'w').write(s)
+          PYEOF
+
       - run: flutter pub get
       - run: flutter build apk --release
 
